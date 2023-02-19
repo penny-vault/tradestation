@@ -12,18 +12,22 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package main
 
-import (
-	"github.com/awnumar/memguard"
-	"github.com/penny-vault/tradestation/cmd"
-)
+package tradestation
 
-func main() {
-	// Safely terminate memory in case of an interrupt signal
-	memguard.CatchInterrupt()
-	// Purge the session when we return
-	defer memguard.Purge()
+// # Account
+// ConfirmOrder
+// ConfirmGroupOrder
+// PlaceOrder
+// PlaceGroupOrder
 
-	cmd.Execute()
-}
+// # Order
+// NewOrder
+// Confirm
+// Place
+// Cancel
+// Replace
+
+// # type GroupOrder []*Order
+// Confirm
+// Place

@@ -15,9 +15,9 @@ test-report.xml
 debug*.log
 
 # compiled binaries
-pvapi
+pv-tradestation
 
 # configuration development files
 *.env
-pvapi.toml
+tradestation.toml
 .vscode

@@ -12,18 +12,29 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package main
+
+package tradestation
 
 import (
-	"github.com/awnumar/memguard"
-	"github.com/penny-vault/tradestation/cmd"
+	"github.com/go-resty/resty/v2"
+	"github.com/spf13/viper"
 )
 
-func main() {
-	// Safely terminate memory in case of an interrupt signal
-	memguard.CatchInterrupt()
-	// Purge the session when we return
-	defer memguard.Purge()
+type API struct {
+	token   *OAuthToken
+	baseUrl string
+	client  *resty.Client
+}
 
-	cmd.Execute()
+func New() *API {
+	api := &API{
+		token:   nil,
+		baseUrl: viper.GetString("sim"),
+		client:  resty.New(),
+	}
+	if viper.GetString("mode") == "live" {
+		api.baseUrl = viper.GetString("live")
+	}
+	api.client = api.client.SetBaseURL(api.baseUrl)
+	return api
 }

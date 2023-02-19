@@ -12,18 +12,24 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package main
+
+package cmd
 
 import (
-	"github.com/awnumar/memguard"
-	"github.com/penny-vault/tradestation/cmd"
+	"github.com/penny-vault/tradestation/tradestation"
+	"github.com/spf13/cobra"
 )
 
-func main() {
-	// Safely terminate memory in case of an interrupt signal
-	memguard.CatchInterrupt()
-	// Purge the session when we return
-	defer memguard.Purge()
+// trxCmd represents the trx command
+var trxCmd = &cobra.Command{
+	Use:   "trx",
+	Short: "Download transactions from tradestation",
+	Run: func(cmd *cobra.Command, args []string) {
+		api := tradestation.New()
+		api.Authenticate()
+	},
+}
 
-	cmd.Execute()
+func init() {
+	rootCmd.AddCommand(trxCmd)
 }
