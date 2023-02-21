@@ -17,7 +17,6 @@ var acctCmd = &cobra.Command{
 	Short: "Download account details",
 	Run: func(cmd *cobra.Command, args []string) {
 		api := tradestation.New()
-		api.Authenticate()
 		accounts, err := api.GetAccounts()
 		if err != nil {
 			log.Error().Err(err).Msg("account download failed")

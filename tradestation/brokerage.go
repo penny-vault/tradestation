@@ -16,6 +16,7 @@
 package tradestation
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -29,6 +30,7 @@ type accountResponse struct {
 
 type Account struct {
 	AccountID   string
+	Alias       string
 	Currency    string
 	Status      string
 	AccountType string
@@ -88,9 +90,66 @@ type Balance struct {
 }
 
 type orderResponse struct {
-	Orders    []*Order
+	Orders    []*tsOrder
 	Errors    []*tsError
 	NextToken string
+}
+
+type tsOrder struct {
+	AccountID               string
+	AdvancedOptions         string
+	ClosedDateTime          string
+	CommissionFee           string
+	ConditionalOrders       []*LinkedOrder
+	ConversionRate          string
+	Currency                string
+	Duration                string
+	FilledPrice             string
+	GoodTillDate            string
+	GroupName               string
+	Legs                    []*tsOrderLeg
+	MarketActivationRules   []*tsMarketRule
+	TimeActivationRules     []*tsTimeRule
+	LimitPrice              string
+	OpenedDateTime          string
+	OrderID                 string
+	OrderType               string
+	PriceUsedForBuyingPower string
+	RejectReason            string
+	Routing                 string
+	ShowOnlyQuantity        string
+	Spread                  string
+	Status                  string
+	StatusDescription       string
+	StopPrice               string
+	UnbundledRouteFee       string
+}
+
+type tsOrderLeg struct {
+	OpenOrClose       string
+	QuantityOrdered   string
+	ExecQuantity      string
+	QuantityRemaining string
+	BuyOrSell         string
+	Symbol            string
+	AssetType         string
+}
+
+type tsMarketRule struct {
+	RuleType   string
+	Symbol     string
+	Predicate  string
+	TriggerKey string
+	Price      string
+}
+
+type tsTimeRule struct {
+	TimeUtc string
+}
+
+type LinkedOrder struct {
+	OrderID      string
+	Relationship string
 }
 
 type OrderLeg struct {
@@ -143,8 +202,9 @@ type TimeRule struct {
 type Order struct {
 	AccountID               string
 	AdvancedOptions         string
-	ClosedDateTime          float64
+	ClosedDateTime          time.Time
 	CommissionFee           float64
+	ConditionalOrders       []*LinkedOrder
 	Duration                string
 	FilledPrice             string
 	GoodTillDate            time.Time
@@ -211,6 +271,7 @@ type Position struct {
 }
 
 func (api *API) GetAccounts() ([]*Account, error) {
+	api.CheckAuth()
 	accounts := accountResponse{
 		Accounts: make([]*Account, 0, 5),
 	}
@@ -225,10 +286,16 @@ func (api *API) GetAccounts() ([]*Account, error) {
 		return nil, fmt.Errorf("/brokerage/accounts %d", resp.StatusCode())
 	}
 
+	// set api on returned accounts
+	for _, acct := range accounts.Accounts {
+		acct.api = api
+	}
+
 	return accounts.Accounts, nil
 }
 
 func (account *Account) GetBalances() (*Balance, error) {
+	account.api.CheckAuth()
 	balances := balanceResponse{
 		Balances: make([]*tsBalance, 0, 1),
 		Errors:   make([]*tsError, 0, 1),
@@ -249,6 +316,8 @@ func (account *Account) GetBalances() (*Balance, error) {
 }
 
 func (account *Account) GetBalancesBOD() (*Balance, error) {
+	account.api.CheckAuth()
+
 	balances := balanceResponse{
 		Balances: make([]*tsBalance, 0, 1),
 		Errors:   make([]*tsError, 0, 1),
@@ -284,74 +353,102 @@ func parseBalances(balances balanceResponse) (*Balance, error) {
 			AccountType: balance.AccountType,
 		}
 
-		if b.BuyingPower, err = strconv.ParseFloat(balance.BuyingPower, 64); err != nil {
-			log.Error().Err(err).Msg("error converting BuyingPower to float64")
-			return nil, err
+		if balance.BuyingPower != "" {
+			if b.BuyingPower, err = strconv.ParseFloat(balance.BuyingPower, 64); err != nil {
+				log.Error().Err(err).Msg("error converting BuyingPower to float64")
+				return nil, err
+			}
 		}
 
-		if b.CashBalance, err = strconv.ParseFloat(balance.CashBalance, 64); err != nil {
-			log.Error().Err(err).Msg("error converting CashBalance to float64")
-			return nil, err
+		if balance.CashBalance != "" {
+			if b.CashBalance, err = strconv.ParseFloat(balance.CashBalance, 64); err != nil {
+				log.Error().Err(err).Msg("error converting CashBalance to float64")
+				return nil, err
+			}
 		}
 
-		if b.Commission, err = strconv.ParseFloat(balance.Commission, 64); err != nil {
-			log.Error().Err(err).Msg("error converting Commission to float64")
-			return nil, err
+		if balance.Commission != "" {
+			if b.Commission, err = strconv.ParseFloat(balance.Commission, 64); err != nil {
+				log.Error().Err(err).Msg("error converting Commission to float64")
+				return nil, err
+			}
 		}
 
-		if b.CostOfPositions, err = strconv.ParseFloat(balance.BalanceDetail.CostOfPositions, 64); err != nil {
-			log.Error().Err(err).Msg("error converting CostOfPositions to float64")
-			return nil, err
+		if balance.BalanceDetail.CostOfPositions != "" {
+			if b.CostOfPositions, err = strconv.ParseFloat(balance.BalanceDetail.CostOfPositions, 64); err != nil {
+				log.Error().Err(err).Msg("error converting CostOfPositions to float64")
+				return nil, err
+			}
 		}
 
-		if b.DayTrades, err = strconv.ParseFloat(balance.BalanceDetail.DayTrades, 64); err != nil {
-			log.Error().Err(err).Msg("error converting DayTrades to float64")
-			return nil, err
+		if balance.BalanceDetail.DayTrades != "" {
+			if b.DayTrades, err = strconv.ParseFloat(balance.BalanceDetail.DayTrades, 64); err != nil {
+				log.Error().Err(err).Msg("error converting DayTrades to float64")
+				return nil, err
+			}
 		}
 
-		if b.Equity, err = strconv.ParseFloat(balance.Equity, 64); err != nil {
-			log.Error().Err(err).Msg("error converting Equity to float64")
-			return nil, err
+		if balance.Equity != "" {
+			if b.Equity, err = strconv.ParseFloat(balance.Equity, 64); err != nil {
+				log.Error().Err(err).Msg("error converting Equity to float64")
+				return nil, err
+			}
 		}
 
-		if b.MaintenanceRate, err = strconv.ParseFloat(balance.BalanceDetail.MaintenanceRate, 64); err != nil {
-			log.Error().Err(err).Msg("error converting MaintenanceRate to float64")
-			return nil, err
+		if balance.BalanceDetail.MaintenanceRate != "" {
+			if b.MaintenanceRate, err = strconv.ParseFloat(balance.BalanceDetail.MaintenanceRate, 64); err != nil {
+				log.Error().Err(err).Msg("error converting MaintenanceRate to float64")
+				return nil, err
+			}
 		}
 
-		if b.MarketValue, err = strconv.ParseFloat(balance.MarketValue, 64); err != nil {
-			log.Error().Err(err).Msg("error converting MarketValue to float64")
-			return nil, err
+		if balance.MarketValue != "" {
+			if b.MarketValue, err = strconv.ParseFloat(balance.MarketValue, 64); err != nil {
+				log.Error().Err(err).Msg("error converting MarketValue to float64")
+				return nil, err
+			}
 		}
 
-		if b.OvernightBuyingPower, err = strconv.ParseFloat(balance.BalanceDetail.OvernightBuyingPower, 64); err != nil {
-			log.Error().Err(err).Msg("error converting OvernightBuyingPower to float64")
-			return nil, err
+		if balance.BalanceDetail.OvernightBuyingPower != "" {
+			if b.OvernightBuyingPower, err = strconv.ParseFloat(balance.BalanceDetail.OvernightBuyingPower, 64); err != nil {
+				log.Error().Err(err).Msg("error converting OvernightBuyingPower to float64")
+				return nil, err
+			}
 		}
 
-		if b.RealizedProfitLoss, err = strconv.ParseFloat(balance.BalanceDetail.RealizedProfitLoss, 64); err != nil {
-			log.Error().Err(err).Msg("error converting RealizedProfitLoss to float64")
-			return nil, err
+		if balance.BalanceDetail.RealizedProfitLoss != "" {
+			if b.RealizedProfitLoss, err = strconv.ParseFloat(balance.BalanceDetail.RealizedProfitLoss, 64); err != nil {
+				log.Error().Err(err).Msg("error converting RealizedProfitLoss to float64")
+				return nil, err
+			}
 		}
 
-		if b.RequiredMargin, err = strconv.ParseFloat(balance.BalanceDetail.RequiredMargin, 64); err != nil {
-			log.Error().Err(err).Msg("error converting RequiredMargin to float64")
-			return nil, err
+		if balance.BalanceDetail.RequiredMargin != "" {
+			if b.RequiredMargin, err = strconv.ParseFloat(balance.BalanceDetail.RequiredMargin, 64); err != nil {
+				log.Error().Err(err).Msg("error converting RequiredMargin to float64")
+				return nil, err
+			}
 		}
 
-		if b.TodaysProfitLoss, err = strconv.ParseFloat(balance.TodaysProfitLoss, 64); err != nil {
-			log.Error().Err(err).Msg("error converting TodaysProfitLoss to float64")
-			return nil, err
+		if balance.TodaysProfitLoss != "" {
+			if b.TodaysProfitLoss, err = strconv.ParseFloat(balance.TodaysProfitLoss, 64); err != nil {
+				log.Error().Err(err).Msg("error converting TodaysProfitLoss to float64")
+				return nil, err
+			}
 		}
 
-		if b.UnclearedDeposit, err = strconv.ParseFloat(balance.UnclearedDeposit, 64); err != nil {
-			log.Error().Err(err).Msg("error converting UnclearedDeposit to float64")
-			return nil, err
+		if balance.UnclearedDeposit != "" {
+			if b.UnclearedDeposit, err = strconv.ParseFloat(balance.UnclearedDeposit, 64); err != nil {
+				log.Error().Err(err).Msg("error converting UnclearedDeposit to float64")
+				return nil, err
+			}
 		}
 
-		if b.UnrealizedProfitLoss, err = strconv.ParseFloat(balance.BalanceDetail.UnrealizedProfitLoss, 64); err != nil {
-			log.Error().Err(err).Msg("error converting UnrealizedProfitLoss to float64")
-			return nil, err
+		if balance.BalanceDetail.UnrealizedProfitLoss != "" {
+			if b.UnrealizedProfitLoss, err = strconv.ParseFloat(balance.BalanceDetail.UnrealizedProfitLoss, 64); err != nil {
+				log.Error().Err(err).Msg("error converting UnrealizedProfitLoss to float64")
+				return nil, err
+			}
 		}
 
 		resBalance[idx] = b
@@ -360,37 +457,344 @@ func parseBalances(balances balanceResponse) (*Balance, error) {
 	return resBalance[0], nil
 }
 
-func (account *Account) GetOrders() ([]*Order, error) {
-	accounts := accountResponse{
-		Accounts: make([]*Account, 0, 5),
+func (account *Account) ordersRequest(url string, nextToken string) (*orderResponse, error) {
+	account.api.CheckAuth()
+
+	orders := orderResponse{
+		Orders: make([]*tsOrder, 0, 100),
+		Errors: make([]*tsError, 0, 1),
 	}
+
+	if nextToken != "" {
+		url = fmt.Sprintf("%s&nextToken=%s", url, nextToken)
+	}
+
 	resp, err := account.api.client.R().
-		SetResult(&accounts).
-		Get("/brokerage/accounts")
+		SetResult(&orders).
+		Get(url)
 	if err != nil {
 		log.Error().Err(err).Msg("account request failed")
 		return nil, err
 	}
 	if resp.StatusCode() >= 400 {
+		log.Error().Int("StatusCode", resp.StatusCode()).Msg("Received invalid status code")
 		return nil, fmt.Errorf("/brokerage/accounts %d", resp.StatusCode())
 	}
+	if len(orders.Errors) != 0 {
+		errorMsgs := make([]string, len(orders.Errors))
+		for idx, errMsg := range orders.Errors {
+			errorMsgs[idx] = errMsg.Message
+		}
+		log.Error().Strs("Errors", errorMsgs).Msg("errors returned by tradestation api")
+		return nil, errors.New("tradestation api returned errors")
+	}
 
-	return nil, nil
+	return &orders, nil
+}
+
+func convertOrders(orders []*tsOrder) ([]*Order, error) {
+	var err error
+	res := make([]*Order, len(orders))
+	for idx, order := range orders {
+		o := &Order{
+			AccountID:         order.AccountID,
+			AdvancedOptions:   order.AdvancedOptions,
+			ConditionalOrders: order.ConditionalOrders,
+			Duration:          order.Duration,
+			FilledPrice:       order.FilledPrice,
+			GroupName:         order.GroupName,
+			OrderID:           order.OrderID,
+			OrderType:         order.OrderType,
+			RejectReason:      order.RejectReason,
+			Routing:           order.Routing,
+			StatusDescription: order.StatusDescription,
+		}
+
+		if order.ClosedDateTime != "" {
+			if o.ClosedDateTime, err = time.Parse("2006-01-02T15:04:05Z", order.ClosedDateTime); err != nil {
+				log.Error().Err(err).Msg("error converting ClosedDateTime to time")
+				return nil, err
+			}
+		}
+
+		if order.CommissionFee != "" {
+			if o.CommissionFee, err = strconv.ParseFloat(order.CommissionFee, 64); err != nil {
+				log.Error().Err(err).Msg("error converting CommissionFee to float64")
+				return nil, err
+			}
+		}
+
+		if order.GoodTillDate != "" {
+			if o.GoodTillDate, err = time.Parse("2006-01-02T15:04:05Z", order.GoodTillDate); err != nil {
+				log.Error().Err(err).Msg("error converting GoodTillDate to time")
+				return nil, err
+			}
+		}
+
+		o.Legs = make([]*OrderLeg, len(order.Legs))
+		for ii, leg := range order.Legs {
+			l := &OrderLeg{
+				OpenOrClose: leg.OpenOrClose,
+				BuyOrSell:   leg.BuyOrSell,
+				Symbol:      leg.Symbol,
+				AssetType:   leg.AssetType,
+			}
+
+			if leg.QuantityOrdered != "" {
+				if l.QuantityOrdered, err = strconv.ParseFloat(leg.QuantityOrdered, 64); err != nil {
+					log.Error().Err(err).Msg("error converting QuantityOrdered to float64")
+					return nil, err
+				}
+			}
+
+			if leg.ExecQuantity != "" {
+				if l.ExecQuantity, err = strconv.ParseFloat(leg.ExecQuantity, 64); err != nil {
+					log.Error().Err(err).Msg("error converting ExecQuantity to float64")
+					return nil, err
+				}
+			}
+
+			if leg.QuantityRemaining != "" {
+				if l.QuantityRemaining, err = strconv.ParseFloat(leg.QuantityRemaining, 64); err != nil {
+					log.Error().Err(err).Msg("error converting QuantityRemaining to float64")
+					return nil, err
+				}
+			}
+
+			o.Legs[ii] = l
+		}
+
+		o.MarketActivationRules = make([]*MarketRule, len(order.MarketActivationRules))
+		for ii, rule := range order.MarketActivationRules {
+			r := &MarketRule{
+				RuleType:   rule.RuleType,
+				Symbol:     rule.Symbol,
+				Predicate:  rule.Predicate,
+				TriggerKey: rule.TriggerKey,
+			}
+
+			if rule.Price != "" {
+				if r.Price, err = strconv.ParseFloat(rule.Price, 64); err != nil {
+					log.Error().Err(err).Msg("error converting Price to float64")
+					return nil, err
+				}
+			}
+
+			o.MarketActivationRules[ii] = r
+		}
+
+		if order.OpenedDateTime != "" {
+			if o.OpenedDateTime, err = time.Parse("2006-01-02T15:04:05Z", order.OpenedDateTime); err != nil {
+				log.Error().Err(err).Msg("error converting OpenedDateTime to time")
+				return nil, err
+			}
+		}
+
+		if order.PriceUsedForBuyingPower != "" {
+			if o.PriceUsedForBuyingPower, err = strconv.ParseFloat(order.PriceUsedForBuyingPower, 64); err != nil {
+				log.Error().Err(err).Msg("error converting PriceUsedForBuyingPower to float64")
+				return nil, err
+			}
+		}
+
+		o.Status = OrderStatus(order.Status)
+
+		o.TimeActivationRules = make([]*TimeRule, len(order.TimeActivationRules))
+		for ii, rule := range order.TimeActivationRules {
+			myTime, err := time.Parse("2006-01-02T15:04:05Z", rule.TimeUtc)
+			if err != nil {
+				log.Error().Err(err).Msg("error converting time activation rule")
+			}
+			t := &TimeRule{
+				TimeUtc: myTime,
+			}
+			o.TimeActivationRules[ii] = t
+		}
+
+		if order.UnbundledRouteFee != "" {
+			if o.UnbundledRouteFee, err = strconv.ParseFloat(order.UnbundledRouteFee, 64); err != nil {
+				log.Error().Err(err).Msg("error converting UnbundledRouteFee to float64")
+				return nil, err
+			}
+		}
+
+		res[idx] = o
+	}
+
+	return res, nil
+}
+
+// GetHistoricalOrders retrieves historical orders from tradestation
+//
+// since is the earliest date to retrieve orders for
+func (account *Account) GetHistoricalOrders(since time.Time) ([]*Order, error) {
+	allOrders := make([]*tsOrder, 0, 100)
+	url := fmt.Sprintf("/brokerage/accounts/%s/historicalorders?since=%s", account.AccountID, since.Format("2006-01-02"))
+	orders, err := account.ordersRequest(url, "")
+	if err != nil {
+		return nil, err
+	}
+	allOrders = append(allOrders, orders.Orders...)
+
+	for orders.NextToken != "" {
+		orders, err := account.ordersRequest(url, orders.NextToken)
+		if err != nil {
+			return nil, err
+		}
+		allOrders = append(allOrders, orders.Orders...)
+	}
+
+	return convertOrders(allOrders)
+}
+
+// GetOrders retrieves todays orders from tradestation
+func (account *Account) GetOrders() ([]*Order, error) {
+	allOrders := make([]*tsOrder, 0, 100)
+	url := fmt.Sprintf("/brokerage/accounts/%s/orders", account.AccountID)
+	orders, err := account.ordersRequest(url, "")
+	if err != nil {
+		return nil, err
+	}
+	allOrders = append(allOrders, orders.Orders...)
+
+	for orders.NextToken != "" {
+		orders, err := account.ordersRequest(url, orders.NextToken)
+		if err != nil {
+			return nil, err
+		}
+		allOrders = append(allOrders, orders.Orders...)
+	}
+	return convertOrders(allOrders)
 }
 
 func (account *Account) GetPositions() ([]*Position, error) {
-	accounts := accountResponse{
-		Accounts: make([]*Account, 0, 5),
+	account.api.CheckAuth()
+	positions := positionResponse{
+		Positions: make([]*tsPosition, 0, 5),
+		Errors:    make([]*tsError, 0, 1),
 	}
 	resp, err := account.api.client.R().
-		SetResult(&accounts).
-		Get("/brokerage/accounts")
+		SetResult(&positions).
+		Get(fmt.Sprintf("/brokerage/accounts/%s/positions", account.AccountID))
 	if err != nil {
 		log.Error().Err(err).Msg("account request failed")
 		return nil, err
 	}
 	if resp.StatusCode() >= 400 {
 		return nil, fmt.Errorf("/brokerage/accounts %d", resp.StatusCode())
+	}
+	if len(positions.Errors) != 0 {
+		errorMsgs := make([]string, len(positions.Errors))
+		for idx, errMsg := range positions.Errors {
+			errorMsgs[idx] = errMsg.Message
+		}
+		log.Error().Strs("Errors", errorMsgs).Msg("errors returned by tradestation api")
+		return nil, errors.New("tradestation api returned errors")
+	}
+
+	// convert positions to native types
+	pos := make([]*Position, len(positions.Positions))
+	for idx, position := range positions.Positions {
+		p := &Position{
+			AccountID:  position.AccountID,
+			AssetType:  position.AssetType,
+			PositionID: position.PositionID,
+			LongShort:  position.LongShort,
+			Symbol:     position.Symbol,
+		}
+
+		if position.AveragePrice != "" {
+			if p.AveragePrice, err = strconv.ParseFloat(position.AveragePrice, 64); err != nil {
+				log.Error().Err(err).Msg("error converting AveragePrice to float64")
+				return nil, err
+			}
+		}
+
+		if position.Last != "" {
+			if p.Last, err = strconv.ParseFloat(position.Last, 64); err != nil {
+				log.Error().Err(err).Msg("error converting Last to float64")
+				return nil, err
+			}
+		}
+
+		if position.Bid != "" {
+			if p.Bid, err = strconv.ParseFloat(position.Bid, 64); err != nil {
+				log.Error().Err(err).Msg("error converting Bid to float64")
+				return nil, err
+			}
+		}
+
+		if position.Ask != "" {
+			if p.Ask, err = strconv.ParseFloat(position.Ask, 64); err != nil {
+				log.Error().Err(err).Msg("error converting Ask to float64")
+				return nil, err
+			}
+		}
+
+		if position.Quantity != "" {
+			if p.Quantity, err = strconv.ParseFloat(position.Quantity, 64); err != nil {
+				log.Error().Err(err).Msg("error converting Ask to float64")
+				return nil, err
+			}
+		}
+
+		if position.Timestamp != "" {
+			if p.Timestamp, err = time.Parse("2006-01-02T15:04:05Z", position.Timestamp); err != nil {
+				log.Error().Err(err).Msg("error converting Timestamp to time")
+				return nil, err
+			}
+		}
+
+		if position.TodaysProfitLoss != "" {
+			if p.TodaysProfitLoss, err = strconv.ParseFloat(position.TodaysProfitLoss, 64); err != nil {
+				log.Error().Err(err).Msg("error converting TodaysProfitLoss to float64")
+				return nil, err
+			}
+		}
+
+		if position.TotalCost != "" {
+			if p.TotalCost, err = strconv.ParseFloat(position.TotalCost, 64); err != nil {
+				log.Error().Err(err).Msg("error converting TotalCost to float64")
+				return nil, err
+			}
+		}
+
+		if position.MarketValue != "" {
+			if p.MarketValue, err = strconv.ParseFloat(position.MarketValue, 64); err != nil {
+				log.Error().Err(err).Msg("error converting MarketValue to float64")
+				return nil, err
+			}
+		}
+
+		if position.MarkToMarketPrice != "" {
+			if p.MarkToMarketPrice, err = strconv.ParseFloat(position.MarkToMarketPrice, 64); err != nil {
+				log.Error().Err(err).Msg("error converting MarkToMarketPrice to float64")
+				return nil, err
+			}
+		}
+
+		if position.UnrealizedProfitLoss != "" {
+			if p.UnrealizedProfitLoss, err = strconv.ParseFloat(position.UnrealizedProfitLoss, 64); err != nil {
+				log.Error().Err(err).Msg("error converting UnrealizedProfitLoss to float64")
+				return nil, err
+			}
+		}
+
+		if position.UnrealizedProfitLossPercent != "" {
+			if p.UnrealizedProfitLossPercent, err = strconv.ParseFloat(position.UnrealizedProfitLossPercent, 64); err != nil {
+				log.Error().Err(err).Msg("error converting UnrealizedProfitLossPercent to float64")
+				return nil, err
+			}
+		}
+
+		if position.UnrealizedProfitLossQty != "" {
+			if p.UnrealizedProfitLossQty, err = strconv.ParseFloat(position.UnrealizedProfitLossQty, 64); err != nil {
+				log.Error().Err(err).Msg("error converting UnrealizedProfitLossQty to float64")
+				return nil, err
+			}
+		}
+
+		pos[idx] = p
 	}
 
 	return nil, nil

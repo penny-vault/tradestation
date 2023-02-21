@@ -20,6 +20,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
@@ -27,9 +28,11 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/hydrogen18/stoppableListener"
+	"github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/pkg/browser"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
@@ -130,12 +133,15 @@ func Secret() string {
 }
 
 func encryptionKey() []byte {
-	userHomeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Error().Err(err).Msg("cannot get home directory")
-		return []byte{}
+	encryptionKeyPath := viper.GetString("auth.key_file")
+	if encryptionKeyPath == "" {
+		userHomeDir, err := os.UserHomeDir()
+		if err != nil {
+			log.Error().Err(err).Msg("cannot get home directory")
+			return []byte{}
+		}
+		encryptionKeyPath = fmt.Sprintf("%s/.ssh/id_rsa", userHomeDir)
 	}
-	encryptionKeyPath := fmt.Sprintf("%s/.ssh/id_rsa", userHomeDir)
 	key, err := os.ReadFile(encryptionKeyPath)
 	if err != nil {
 		log.Error().Err(err).Str("EncryptionKey", encryptionKeyPath).Msg("could not read encryption key")
@@ -159,7 +165,67 @@ func stateCode() string {
 	return string(b)
 }
 
-func (api *API) Authenticate() {
+// CheckAuth checks if there is a token that is not expired available
+func (api *API) CheckAuth() {
+	if api.token == nil || api.token.AccessToken == "" {
+		api.loadStateFile()
+	}
+
+	// if access token is still blank then authenticate
+	if api.token == nil || api.token.AccessToken == "" {
+		api.authenticate()
+	}
+
+	token, err := jwt.Parse([]byte(api.token.AccessToken), jwt.WithVerify(false))
+	if err != nil {
+		log.Error().Err(err).Msg("could not verify access token")
+	}
+
+	if token.Expiration().Before(time.Now().Add(time.Minute * 1)) {
+		log.Info().Time("Expiration", token.Expiration()).Msg("refreshing access token")
+		api.authenticate()
+	}
+}
+
+func (api *API) loadStateFile() {
+	stateFn := viper.GetString("state_file")
+	state, err := os.ReadFile(stateFn)
+	if err != nil {
+		log.Warn().Err(err).Str("StateFile", stateFn).Msg("could not read state file")
+		return
+	}
+	stateData := DecryptAES(string(state))
+	var token OAuthToken
+	err = json.Unmarshal([]byte(stateData), &token)
+	if err != nil {
+		log.Error().Err(err).Msg("could not unmarshal state json")
+		return
+	}
+
+	api.client.SetAuthScheme("Bearer")
+	api.client.SetAuthToken(token.AccessToken)
+
+	api.token = &token
+	log.Debug().Msg("loaded state from file")
+}
+
+func (api *API) writeStateFile() {
+	stateFn := viper.GetString("state_file")
+	data, err := json.Marshal(api.token)
+	if err != nil {
+		log.Error().Err(err).Msg("could not marshal token to json")
+		return
+	}
+
+	encryptedData := EncryptAES(string(data))
+	err = os.WriteFile(stateFn, []byte(encryptedData), 0600)
+	if err != nil {
+		log.Error().Err(err).Str("StateFile", stateFn).Msg("could not write state file")
+	}
+	log.Debug().Msg("wrote state to file")
+}
+
+func (api *API) authenticate() {
 	// generate a unique stateKey to identify this request
 	stateKey := stateCode()
 
@@ -239,4 +305,6 @@ func (api *API) Authenticate() {
 	api.client.SetAuthToken(token.AccessToken)
 
 	api.token = &token
+
+	api.writeStateFile()
 }

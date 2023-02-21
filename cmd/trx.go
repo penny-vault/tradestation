@@ -16,7 +16,11 @@
 package cmd
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/penny-vault/tradestation/tradestation"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +30,29 @@ var trxCmd = &cobra.Command{
 	Short: "Download transactions from tradestation",
 	Run: func(cmd *cobra.Command, args []string) {
 		api := tradestation.New()
-		api.Authenticate()
+		accounts, err := api.GetAccounts()
+		if err != nil {
+			log.Error().Err(err).Msg("Error getting accounts")
+		}
+		fmt.Println("# Accounts")
+		for _, account := range accounts {
+			if account.Alias != "" {
+				fmt.Printf("## %s (%s)\n", account.Alias, account.AccountID)
+			} else {
+				fmt.Printf("## %s (%s)\n", account.AccountID, account.AccountType)
+			}
+
+			// Get orders for the last 30 days
+			orders, err := account.GetHistoricalOrders(time.Now().AddDate(0, 0, -30))
+			if err != nil {
+				log.Error().Err(err).Str("AccountID", account.AccountID).Msg("error getting orders for account")
+			}
+			for ii, order := range orders {
+				fmt.Printf(" %d. %s %s %s\n", ii+1, order.OrderID, order.StatusDescription, order.Legs[0].Symbol)
+			}
+
+			fmt.Printf("\n")
+		}
 	},
 }
 

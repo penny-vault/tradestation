@@ -20,4 +20,5 @@ pv-tradestation
 # configuration development files
 *.env
 tradestation.toml
+*.state
 .vscode
