@@ -4,8 +4,9 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"fmt"
+	"os"
 
+	"github.com/olekukonko/tablewriter"
 	"github.com/penny-vault/tradestation/tradestation"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -21,9 +22,16 @@ var acctCmd = &cobra.Command{
 		if err != nil {
 			log.Error().Err(err).Msg("account download failed")
 		}
-		for idx, acct := range accounts {
-			fmt.Println(idx, acct)
+
+		table := tablewriter.NewWriter(os.Stdout)
+		table.SetHeader([]string{"Account ID", "Type", "Alias", "Status"})
+		table.SetBorder(false) // Set Border to false
+
+		for _, acct := range accounts {
+			table.Append([]string{acct.AccountID, acct.AccountType, acct.Alias, acct.Status})
 		}
+
+		table.Render()
 	},
 }
 

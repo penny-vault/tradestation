@@ -154,9 +154,9 @@ type LinkedOrder struct {
 
 type OrderLeg struct {
 	OpenOrClose       string
-	QuantityOrdered   float64
-	ExecQuantity      float64
-	QuantityRemaining float64
+	QuantityOrdered   int64
+	ExecQuantity      int64
+	QuantityRemaining int64
 	BuyOrSell         string
 	Symbol            string
 	AssetType         string
@@ -187,11 +187,43 @@ const (
 	SUSPENDED             OrderStatus = "SUS"
 )
 
+type MarketRuleType string
+
+const (
+	PRICE MarketRuleType = "Price"
+)
+
+type MarketRulePredicate string
+
+const (
+	LT  MarketRulePredicate = "Lt"
+	LTE MarketRulePredicate = "Lte"
+	GT  MarketRulePredicate = "Gt"
+	GTE MarketRulePredicate = "Gte"
+)
+
+type MarketRuleTrigger string
+
+const (
+	SINGLE_TRADE_TICK      MarketRuleTrigger = "STT"  // One trade tick must print within your stop price to trigger your stop.
+	SINGLE_TRADE_TICK_NBBO MarketRuleTrigger = "STTN" // One trade tick within the National Best Bid or Offer must print within your stop price to trigger your stop.
+	SINGLE_BIDASK_TICK     MarketRuleTrigger = "SBA"  // Buy/Cover Orders: One Ask tick must print within your stop price to trigger your stop. Sell/Short Orders: One Bid tick must print within your stop price to trigger your stop.
+	SINGLE_ASKBID_TICK     MarketRuleTrigger = "SAB"  // Buy/Cover Orders: One Bid tick must print within your stop price to trigger your stop. Sell/Short Orders: One Ask tick must print within your stop price to trigger your stop.
+	DOUBLE_TRADE_TICK      MarketRuleTrigger = "DTT"  // Two consecutive trade ticks must print within your stop price to trigger your stop.
+	DOUBLE_TRADE_TICK_NBBO MarketRuleTrigger = "DTTN" // Two consecutive trade ticks within the National Best Bid or Offer must print within your stop price to trigger your stop.
+	DOUBLE_BIDASK_TICK     MarketRuleTrigger = "DBA"  // Buy/Cover Orders: Two consecutive Ask ticks must print within your stop price to trigger your stop. Sell/Short Orders: Two consecutive Bid ticks must print within your stop price to trigger your stop.
+	DOUBLE_ASKBID_TICK     MarketRuleTrigger = "DAB"  // Buy/Cover Orders: Two consecutive Bid ticks must print within your stop price to trigger your stop. Sell/Short Orders: Two consecutive Ask ticks must print within your stop price to trigger your stop.
+	TWICE_TRADE_TICK       MarketRuleTrigger = "TTT"  // Two trade ticks must print within your stop price to trigger your stop.
+	TWICE_TRADE_TICK_NBBO  MarketRuleTrigger = "TTTN" // Two trade ticks within the National Best Bid or Offer must print within your stop price to trigger your stop.
+	TWICE_BIDASK_TICK      MarketRuleTrigger = "TBA"  // Buy/Cover Orders: Two Ask ticks must print within your stop price to trigger your stop. Sell/Short Orders: Two Bid ticks must print within your stop price to trigger your stop.
+	TWICE_ASKBID_TICK      MarketRuleTrigger = "TAB"  // Buy/Cover Orders: Two Bid ticks must print within your stop price to trigger your stop. Sell/Short Orders: Two Ask ticks must print within your stop price to trigger your stop.
+)
+
 type MarketRule struct {
-	RuleType   string
+	RuleType   MarketRuleType
 	Symbol     string
-	Predicate  string
-	TriggerKey string
+	Predicate  MarketRulePredicate
+	TriggerKey MarketRuleTrigger
 	Price      float64
 }
 
@@ -206,7 +238,7 @@ type Order struct {
 	CommissionFee           float64
 	ConditionalOrders       []*LinkedOrder
 	Duration                string
-	FilledPrice             string
+	FilledPrice             float64
 	GoodTillDate            time.Time
 	GroupName               string
 	Legs                    []*OrderLeg
@@ -258,7 +290,7 @@ type Position struct {
 	Ask                         float64
 	PositionID                  string
 	LongShort                   string
-	Quantity                    float64
+	Quantity                    int64
 	Symbol                      string
 	Timestamp                   time.Time
 	TodaysProfitLoss            float64
@@ -268,6 +300,20 @@ type Position struct {
 	UnrealizedProfitLoss        float64
 	UnrealizedProfitLossPercent float64
 	UnrealizedProfitLossQty     float64
+}
+
+func (api *API) GetAccount(accountID string) (*Account, error) {
+	accounts, err := api.GetAccounts()
+	if err != nil {
+		log.Error().Err(err).Str("Requested AccountID", accountID).Msg("error retrieving account")
+		return nil, err
+	}
+	for _, account := range accounts {
+		if accountID == account.AccountID {
+			return account, nil
+		}
+	}
+	return nil, nil
 }
 
 func (api *API) GetAccounts() ([]*Account, error) {
@@ -494,6 +540,10 @@ func (account *Account) ordersRequest(url string, nextToken string) (*orderRespo
 
 func convertOrders(orders []*tsOrder) ([]*Order, error) {
 	var err error
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return nil, err
+	}
 	res := make([]*Order, len(orders))
 	for idx, order := range orders {
 		o := &Order{
@@ -501,7 +551,6 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 			AdvancedOptions:   order.AdvancedOptions,
 			ConditionalOrders: order.ConditionalOrders,
 			Duration:          order.Duration,
-			FilledPrice:       order.FilledPrice,
 			GroupName:         order.GroupName,
 			OrderID:           order.OrderID,
 			OrderType:         order.OrderType,
@@ -515,6 +564,7 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 				log.Error().Err(err).Msg("error converting ClosedDateTime to time")
 				return nil, err
 			}
+			o.ClosedDateTime = o.ClosedDateTime.In(nyc)
 		}
 
 		if order.CommissionFee != "" {
@@ -524,11 +574,19 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 			}
 		}
 
+		if order.FilledPrice != "" {
+			if o.FilledPrice, err = strconv.ParseFloat(order.FilledPrice, 64); err != nil {
+				log.Error().Err(err).Msg("error converting FilledPrice to float64")
+				return nil, err
+			}
+		}
+
 		if order.GoodTillDate != "" {
 			if o.GoodTillDate, err = time.Parse("2006-01-02T15:04:05Z", order.GoodTillDate); err != nil {
 				log.Error().Err(err).Msg("error converting GoodTillDate to time")
 				return nil, err
 			}
+			o.GoodTillDate = o.GoodTillDate.In(nyc)
 		}
 
 		o.Legs = make([]*OrderLeg, len(order.Legs))
@@ -541,21 +599,21 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 			}
 
 			if leg.QuantityOrdered != "" {
-				if l.QuantityOrdered, err = strconv.ParseFloat(leg.QuantityOrdered, 64); err != nil {
+				if l.QuantityOrdered, err = strconv.ParseInt(leg.QuantityOrdered, 0, 64); err != nil {
 					log.Error().Err(err).Msg("error converting QuantityOrdered to float64")
 					return nil, err
 				}
 			}
 
 			if leg.ExecQuantity != "" {
-				if l.ExecQuantity, err = strconv.ParseFloat(leg.ExecQuantity, 64); err != nil {
+				if l.ExecQuantity, err = strconv.ParseInt(leg.ExecQuantity, 0, 64); err != nil {
 					log.Error().Err(err).Msg("error converting ExecQuantity to float64")
 					return nil, err
 				}
 			}
 
 			if leg.QuantityRemaining != "" {
-				if l.QuantityRemaining, err = strconv.ParseFloat(leg.QuantityRemaining, 64); err != nil {
+				if l.QuantityRemaining, err = strconv.ParseInt(leg.QuantityRemaining, 0, 64); err != nil {
 					log.Error().Err(err).Msg("error converting QuantityRemaining to float64")
 					return nil, err
 				}
@@ -567,10 +625,10 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 		o.MarketActivationRules = make([]*MarketRule, len(order.MarketActivationRules))
 		for ii, rule := range order.MarketActivationRules {
 			r := &MarketRule{
-				RuleType:   rule.RuleType,
+				RuleType:   MarketRuleType(rule.RuleType),
 				Symbol:     rule.Symbol,
-				Predicate:  rule.Predicate,
-				TriggerKey: rule.TriggerKey,
+				Predicate:  MarketRulePredicate(rule.Predicate),
+				TriggerKey: MarketRuleTrigger(rule.TriggerKey),
 			}
 
 			if rule.Price != "" {
@@ -588,6 +646,7 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 				log.Error().Err(err).Msg("error converting OpenedDateTime to time")
 				return nil, err
 			}
+			o.OpenedDateTime = o.OpenedDateTime.In(nyc)
 		}
 
 		if order.PriceUsedForBuyingPower != "" {
@@ -669,6 +728,10 @@ func (account *Account) GetOrders() ([]*Order, error) {
 
 func (account *Account) GetPositions() ([]*Position, error) {
 	account.api.CheckAuth()
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return nil, err
+	}
 	positions := positionResponse{
 		Positions: make([]*tsPosition, 0, 5),
 		Errors:    make([]*tsError, 0, 1),
@@ -732,7 +795,7 @@ func (account *Account) GetPositions() ([]*Position, error) {
 		}
 
 		if position.Quantity != "" {
-			if p.Quantity, err = strconv.ParseFloat(position.Quantity, 64); err != nil {
+			if p.Quantity, err = strconv.ParseInt(position.Quantity, 0, 64); err != nil {
 				log.Error().Err(err).Msg("error converting Ask to float64")
 				return nil, err
 			}
@@ -743,6 +806,7 @@ func (account *Account) GetPositions() ([]*Position, error) {
 				log.Error().Err(err).Msg("error converting Timestamp to time")
 				return nil, err
 			}
+			p.Timestamp = p.Timestamp.In(nyc)
 		}
 
 		if position.TodaysProfitLoss != "" {
@@ -797,5 +861,5 @@ func (account *Account) GetPositions() ([]*Position, error) {
 		pos[idx] = p
 	}
 
-	return nil, nil
+	return pos, nil
 }
