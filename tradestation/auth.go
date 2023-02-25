@@ -21,12 +21,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -178,7 +180,15 @@ func (api *API) CheckAuth() {
 
 	token, err := jwt.Parse([]byte(api.token.AccessToken), jwt.WithVerify(false))
 	if err != nil {
-		log.Error().Err(err).Msg("could not verify access token")
+		if errors.Is(err, jwt.ErrTokenExpired()) {
+			log.Info().Msg("Access token is expired")
+			if api.token.RefreshToken != "" && api.token.RefreshToken != "EOF" {
+				api.refreshAuth()
+			}
+			return
+		} else {
+			log.Error().Err(err).Msg("could not verify access token")
+		}
 	}
 
 	if token.Expiration().Before(time.Now().Add(time.Minute * 1)) {
@@ -275,7 +285,11 @@ func (api *API) authenticate() {
 		http.Serve(listener, nil)
 	}()
 
-	authUrl := fmt.Sprintf("https://signin.tradestation.com/authorize?response_type=code&client_id=%s&redirect_uri=%s&audience=https://api.tradestation.com&state=%s&scope=openid%%20profile%%20MarketData%%20ReadAccount%%20Trade", ApiKey(), "http://localhost:31022", stateKey)
+	scopes := []string{"openid", "profile", "MarketData", "ReadAccount", "Trade"}
+	if viper.GetBool("auth.offline_access") {
+		scopes = append(scopes, "offline_access")
+	}
+	authUrl := fmt.Sprintf("https://signin.tradestation.com/authorize?response_type=code&client_id=%s&redirect_uri=%s&audience=https://api.tradestation.com&state=%s&scope=%s", ApiKey(), "http://localhost:31022", stateKey, strings.Join(scopes, "%20"))
 	log.Debug().Str("Auth URL", authUrl).Msg("authorization url")
 
 	browser.OpenURL(authUrl)
@@ -306,5 +320,33 @@ func (api *API) authenticate() {
 
 	api.token = &token
 
+	api.writeStateFile()
+}
+
+func (api *API) refreshAuth() {
+	token := OAuthToken{}
+	curl := resty.New()
+	resp, err := curl.R().
+		SetFormData(map[string]string{
+			"grant_type":    "refresh_token",
+			"client_id":     ApiKey(),
+			"client_secret": Secret(),
+			"refresh_token": api.token.RefreshToken,
+		}).
+		SetResult(&token).
+		Post("https://signin.tradestation.com/oauth/token")
+	if err != nil {
+		log.Panic().Err(err).Msg("err exchanging oauth code for a token")
+	}
+	if resp.StatusCode() >= 300 {
+		log.Panic().Int("StatusCode", resp.StatusCode()).Msg("request failed")
+	}
+
+	api.client.SetAuthScheme("Bearer")
+	api.client.SetAuthToken(token.AccessToken)
+
+	api.token.AccessToken = token.AccessToken
+	api.token.ExpiresIn = token.ExpiresIn
+	api.token.IDToken = token.IDToken
 	api.writeStateFile()
 }

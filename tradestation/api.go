@@ -36,5 +36,6 @@ func New() *API {
 		api.baseUrl = viper.GetString("live")
 	}
 	api.client = api.client.SetBaseURL(api.baseUrl)
+	api.client.SetDebug(viper.GetBool("debug"))
 	return api
 }
