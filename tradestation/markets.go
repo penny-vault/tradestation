@@ -108,6 +108,13 @@ type Quote struct {
 	VWAP                float64
 }
 
+func min(a, b int) int {
+	if a <= b {
+		return a
+	}
+	return b
+}
+
 func (api *API) GetQuotes(tickers []string) ([]*Quote, error) {
 	api.CheckAuth()
 	nyc, err := time.LoadLocation("America/New_York")
@@ -116,31 +123,40 @@ func (api *API) GetQuotes(tickers []string) ([]*Quote, error) {
 		return nil, err
 	}
 
-	quotes := quoteResponse{
-		Quotes: make([]*tsQuote, 0, len(tickers)),
-		Errors: make([]*tsQuoteError, 0, len(tickers)),
-	}
-	resp, err := api.client.R().
-		SetResult(&quotes).
-		Get(fmt.Sprintf("/marketdata/quotes/%s", strings.Join(tickers, ",")))
-	if err != nil {
-		log.Error().Err(err).Msg("account request failed")
-		return nil, err
-	}
-	if resp.StatusCode() >= 400 {
-		log.Error().Int("StatusCode", resp.StatusCode()).Strs("Tickers", tickers).Msg("invalid response from /marketdata/quotes")
-		return nil, fmt.Errorf("%s %d", resp.Request.URL, resp.StatusCode())
-	}
-	if len(quotes.Errors) > 0 {
-		for _, err := range quotes.Errors {
-			log.Error().Str("ErrorMsg", err.Error).Str("Ticker", err.Symbol).Msg("quote request failed")
+	limit := 100
+	myQuotes := make([]*tsQuote, 0, len(tickers))
+
+	for ii := 0; ii < len(tickers); ii += limit {
+		batch := tickers[ii:min(ii+limit, len(tickers))]
+
+		quotes := quoteResponse{
+			Quotes: make([]*tsQuote, 0, len(batch)),
+			Errors: make([]*tsQuoteError, 0, len(batch)),
 		}
-		return nil, errors.New("quote download failed")
+		resp, err := api.client.R().
+			SetResult(&quotes).
+			Get(fmt.Sprintf("/marketdata/quotes/%s", strings.Join(batch, ",")))
+		if err != nil {
+			log.Error().Err(err).Msg("account request failed")
+			return nil, err
+		}
+		if resp.StatusCode() >= 400 {
+			log.Error().Int("StatusCode", resp.StatusCode()).Strs("Tickers", tickers).Msg("invalid response from /marketdata/quotes")
+			return nil, fmt.Errorf("%s %d", string(resp.Body()), resp.StatusCode())
+		}
+		if len(quotes.Errors) > 0 {
+			for _, err := range quotes.Errors {
+				log.Error().Str("ErrorMsg", err.Error).Str("Ticker", err.Symbol).Msg("quote request failed")
+			}
+			return nil, errors.New("quote download failed")
+		}
+
+		myQuotes = append(myQuotes, quotes.Quotes...)
 	}
 
 	// set api on returned accounts
-	res := make([]*Quote, len(quotes.Quotes))
-	for idx, quote := range quotes.Quotes {
+	res := make([]*Quote, len(myQuotes))
+	for idx, quote := range myQuotes {
 		q := &Quote{
 			Flags:        quote.Flags,
 			Restrictions: quote.Restrictions,

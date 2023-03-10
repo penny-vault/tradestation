@@ -104,11 +104,13 @@ type tsOrder struct {
 	ConversionRate          string
 	Currency                string
 	Duration                string
+	Error                   string
 	FilledPrice             string
 	GoodTillDate            string
 	GroupName               string
 	Legs                    []*tsOrderLeg
 	MarketActivationRules   []*tsMarketRule
+	Message                 string
 	TimeActivationRules     []*tsTimeRule
 	LimitPrice              string
 	OpenedDateTime          string
@@ -544,6 +546,7 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	res := make([]*Order, len(orders))
 	for idx, order := range orders {
 		o := &Order{
@@ -557,6 +560,13 @@ func convertOrders(orders []*tsOrder) ([]*Order, error) {
 			RejectReason:      order.RejectReason,
 			Routing:           order.Routing,
 			StatusDescription: order.StatusDescription,
+		}
+
+		if order.Error == "FAILED" {
+			o.Status = REJECTED
+			o.StatusDescription = order.Message
+			res[idx] = o
+			continue
 		}
 
 		if order.ClosedDateTime != "" {

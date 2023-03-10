@@ -181,7 +181,7 @@ func (api *API) CheckAuth() {
 	token, err := jwt.Parse([]byte(api.token.AccessToken), jwt.WithVerify(false))
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired()) {
-			log.Info().Msg("Access token is expired")
+			log.Info().Msg("Access token is expired; requesting new one with refresh token.")
 			if api.token.RefreshToken != "" && api.token.RefreshToken != "EOF" {
 				api.refreshAuth()
 			}

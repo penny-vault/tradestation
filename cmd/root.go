@@ -52,6 +52,7 @@ func init() {
 
 func initLog() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }
 
 // initConfig reads in config file and ENV variables if set.
