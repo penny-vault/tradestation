@@ -23,5 +23,5 @@ Configuration parameters should be placed in a file called `tradestation.toml`
 | auth.offline_access | Yes | Enable refresh_tokens, this allows you to use the trade station API as an unattended daemon          |
 | auth.apikey         | Yes | API Key issued by tradestation                                                                       |
 | auth.secret         | Yes | API Secret issued by tradestation                                                                    |
-| pv.apitoken         | No  | API Token for access to PV-API. Required if syncing with a PV-API strategy                           |
+| pv.apikey           | No  | API Token for access to PV-API. Required if syncing with a PV-API strategy                           |
 | key_file            | No  | Path to encryption key (defaults to ~/.ssh/id_rsa)                                                   |
